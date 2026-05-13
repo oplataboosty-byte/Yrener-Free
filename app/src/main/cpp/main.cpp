@@ -23,10 +23,16 @@
 #include "setting.h"
 #include "wLibs/Utils.h"
 
-#define qword long long
+#ifndef qword
+#define qword unsigned long long
+#endif
+
+extern qword g_PlayerPoolPtr;
+
 JavaVM* g_JavaVM = nullptr;
 JNIEnv* g_MainEnv = nullptr;
 int glWidth = 0;
+int glHeight = 0;
 bool is_setup = false;
 MenuState g_Menu;
 float g_SaveTimer = 0.0f;
@@ -1008,13 +1014,12 @@ void DrawMainMenu() {
                 ImGui::EndChild();
                 ImGui::PopStyleColor();
                 break;
-
             }
+
             case 4:
                 drawSectionTitle("Настройки");
                 if (drawTileAction("settings_save", "Сохранить", tileWidth)) {
 
-            }
                 }
                 ImGui::SameLine(0.0f, gap);
                 if (drawTileAction("settings_load", "Загрузить", tileWidth)) {
