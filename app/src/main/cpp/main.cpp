@@ -504,7 +504,7 @@ void DrawFPS() {
     char fpsText[32];
     snprintf(fpsText, sizeof(fpsText), "FPS: %.0f", io.Framerate);
     ImVec2 textSize = ImGui::CalcTextSize(fpsText);
-    ImVec2 pos = ImVec2(glWidth - textSize.x - 25, 25);
+    ImVec2 pos = ImVec2(glWidth - textSize.x - 150, 25);  // MOVED LEFT
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
     dl->AddRectFilled(ImVec2(pos.x - 12, pos.y - 6),
                       ImVec2(pos.x + textSize.x + 12, pos.y + textSize.y + 6),
@@ -558,7 +558,7 @@ void DrawCoordsWindow() {
     ThemeColors tc = GetThemeColors(g_Menu.currentTheme);
     ImVec2 pos = g_Menu.showClock
                  ? ImVec2(g_Menu.clockPos.x, g_Menu.clockPos.y + 58.0f)
-                 : ImVec2(glWidth - 240.0f, 90.0f);
+                 : ImVec2(glWidth - 380.0f, 90.0f);  // MOVED LEFT
 
     ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0.72f));
@@ -887,7 +887,7 @@ void DrawMainMenu() {
         ImGui::EndChild();
 
         ImGui::SetCursorPos(ImVec2(contentX, bodyY));
-        ImGui::BeginChild("##ContentModern", ImVec2(contentW, bodyH), true, ImGuiWindowFlags_NoScrollbar);
+        ImGui::BeginChild("##ContentModern", ImVec2(contentW, bodyH), true);  // SCROLL ENABLED
 
         ImGui::Dummy(ImVec2(0.0f, S(10.0f)));
 
@@ -1006,6 +1006,25 @@ void DrawMainMenu() {
                 ImGui::Text("VehiclePtr: player+0x3B4");
                 ImGui::Text("WeaponSlot: player+0x5A0");
                 ImGui::Text("WeaponArray: player+0x5A8");
+                
+                // ==== КНОПКИ ====
+                ImGui::Dummy(ImVec2(0, S(12.0f)));
+                ImGui::TextColored(ImVec4(0.2f, 0.3f, 0.5f, 1.0f), "Тестовые функции:");
+                ImGui::Separator();
+                
+                if (ImGui::Button("Отправить тест в чат", ImVec2(-1, S(40.0f)))) {
+                    if (SendChatMessage) {
+                        SendChatMessage((char*)"[Yrener] Test message");
+                    }
+                }
+                
+                if (ImGui::Button("Показать libaddr", ImVec2(-1, S(40.0f)))) {
+                    char msg[256];
+                    snprintf(msg, sizeof(msg), "[Yrener] libaddr: 0x%llX", (unsigned long long)libaddr);
+                    if (AddChatMessage) {
+                        AddChatMessage(msg);
+                    }
+                }
                 
                 ImGui::Dummy(ImVec2(0, S(8.0f)));
                 ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), 
@@ -1196,6 +1215,9 @@ void hook_game_functions() {
     DobbyHook((void*)(libaddr + string2Offset("0x659684")), (void *)CNetGame_Process, (void **)&old_CNetGame_Process);
     */
     // ==================== END OFFSETS ====================
+    
+    // NOW call hook_game_functions since libaddr is set
+    hook_game_functions();
 
     const char* sendJsonSymbols[] = {
             "Java_com_blackhub_bronline_game_core_JNILib_sendJsonData",
@@ -1240,7 +1262,7 @@ void hook_entry() {
         }
         dlclose(lib);
     }
-    hook_game_functions();
+    // hook_game_functions() moved inside hook_game_functions after libaddr is set
 }
 extern "C" {
 
