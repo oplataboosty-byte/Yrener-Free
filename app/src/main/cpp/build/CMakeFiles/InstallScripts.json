@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/data/data/com.termux/files/home/ree-open-main/app/src/main/cpp/build/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
