@@ -27,6 +27,8 @@
 #define qword unsigned long long
 #endif
 
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "YrenerCheat", __VA_ARGS__)
+
 extern qword g_PlayerPoolPtr;
 
 // ==================== CHAMS (PLAYER HIGHLIGHTING) ====================
