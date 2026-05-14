@@ -167,31 +167,23 @@ bool IsPlayerValid(qword playerPtr) {
 static float g_ViewMatrix[16] = {0};
 static bool g_MatrixInitialized = false;
 
-struct Vector2 {
-    float x, y;
-};
-
-struct Vector3 {
-    float x, y, z;
-};
-
-// PUBG WorldToScreen function
-Vector2 WorldToScreenPUBG(Vector3 worldPos, float matrix[16], int screenWidth, int screenHeight) {
+// PUBG WorldToScreen function (using ImVec2 to avoid conflicts)
+ImVec2 WorldToScreenPUBG(float worldX, float worldY, float worldZ, float matrix[16], int screenWidth, int screenHeight) {
     float px = screenWidth / 2.0f;
     float py = screenHeight / 2.0f;
     
     // Calculate W (perspective divide) 
-    float ViewW = matrix[3] * worldPos.x + matrix[7] * worldPos.y + matrix[11] * worldPos.z + matrix[15];
+    float ViewW = matrix[3] * worldX + matrix[7] * worldY + matrix[11] * worldZ + matrix[15];
     
     if (ViewW < 0.01f) {
-        return Vector2{-999, -999}; // Behind camera
+        return ImVec2(-999, -999); // Behind camera
     }
     
     // Calculate screen coordinates
-    float x = px + (matrix[0] * worldPos.x + matrix[4] * worldPos.y + matrix[8] * worldPos.z + matrix[12]) / ViewW * px;
-    float y = py - (matrix[1] * worldPos.x + matrix[5] * worldPos.y + matrix[9] * worldPos.z + matrix[13]) / ViewW * py;
+    float x = px + (matrix[0] * worldX + matrix[4] * worldY + matrix[8] * worldZ + matrix[12]) / ViewW * px;
+    float y = py - (matrix[1] * worldX + matrix[5] * worldY + matrix[9] * worldZ + matrix[13]) / ViewW * py;
     
-    return Vector2{x, y};
+    return ImVec2(x, y);
 }
 
 // Update ViewMatrix (try multiple methods)
@@ -1249,8 +1241,7 @@ void DrawESP() {
         if (distance > g_Menu.espMaxDistance || distance < 0.1f) continue;
         
         // Use PUBG WorldToScreen
-        Vector3 worldPos = {px, py, pz};
-        Vector2 screen = WorldToScreenPUBG(worldPos, g_ViewMatrix, g_Menu.screenWidth, g_Menu.screenHeight);
+        ImVec2 screen = WorldToScreenPUBG(px, py, pz, g_ViewMatrix, g_Menu.screenWidth, g_Menu.screenHeight);
         
         if (screen.x < 0 || screen.x > g_Menu.screenWidth) continue;
         if (screen.y < 0 || screen.y > g_Menu.screenHeight) continue;
