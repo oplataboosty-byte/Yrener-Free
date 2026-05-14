@@ -559,75 +559,204 @@ bool IsTouchInMenuArea(float x, float y) {
             y >= g_Menu.menuPos.y && y <= g_Menu.menuPos.y + GetMenuHeightScaled());
 }
 
+// FPS Draggable variables
+static bool fpsDragging = false;
+static ImVec2 fpsPosition = ImVec2(150.0f, 100.0f);
+static ImVec2 fpsDragOffset = ImVec2(0, 0);
+
+// Coordinates Draggable variables
+static bool coordsDragging = false;
+static ImVec2 coordsPosition = ImVec2(300.0f, 100.0f);
+static ImVec2 coordsDragOffset = ImVec2(0, 0);
+
+// FPS Graph Draggable variables
+static bool graphDragging = false;
+static ImVec2 graphPosition = ImVec2(500.0f, 400.0f);
+static ImVec2 graphDragOffset = ImVec2(0, 0);
+
 void DrawFPS() {
     if (!g_Menu.showFPS) return;
+    
     ImGuiIO& io = ImGui::GetIO();
-    ThemeColors tc = GetThemeColors(g_Menu.currentTheme);
+    bool canDrag = g_Menu.isOpen; // Можно двигать ТОЛЬКО когда меню открыто
     
-    // FPS текст
-    char fpsText[64];
-    snprintf(fpsText, sizeof(fpsText), "FPS: %.0f", io.Framerate);
+    char fpsNumBuffer[20];
+    sprintf(fpsNumBuffer, "%.0f", io.Framerate);
     
-    float fpsFontSize = ImGui::GetFontSize() * 1.6f;
-    ImVec2 fpsTextSize = ImGui::GetFont()->CalcTextSizeA(fpsFontSize, FLT_MAX, 0.0f, fpsText);
-    ImVec2 fpsPos = ImVec2(glWidth - fpsTextSize.x - 80, 55);
+    const char* fpsText = "FPS";
+    const float fontSize = 36.0f;
+    const float titleFontSize = 18.0f;
     
-    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    ImVec2 displaySize = io.DisplaySize;
+    ImFont* font = ImGui::GetFont();
+    ImVec2 numSize = ImGui::CalcTextSize(fpsNumBuffer, NULL, false, 0.0f);
+    ImVec2 textSize = ImGui::CalcTextSize(fpsText, NULL, false, 0.0f);
+    numSize.x *= (fontSize / font->FontSize);
+    numSize.y *= (fontSize / font->FontSize);
+    textSize.x *= (titleFontSize / font->FontSize);
+    textSize.y *= (titleFontSize / font->FontSize);
     
-    // Фон для FPS
-    dl->AddRectFilled(ImVec2(fpsPos.x - 16, fpsPos.y - 10),
-                      ImVec2(fpsPos.x + fpsTextSize.x + 16, fpsPos.y + fpsTextSize.y + 10),
-                      ImGui::ColorConvertFloat4ToU32(ImVec4(0, 0, 0, 0.70f)), 10.0f);
-    dl->AddText(ImGui::GetFont(), fpsFontSize, fpsPos,
-                ImGui::ColorConvertFloat4ToU32(tc.text), fpsText);
+    const float padding = 20.0f;
+    const float lineSpacing = 8.0f;
+    const float cornerRounding = 15.0f;
+    float boxWidth = fmax(numSize.x, textSize.x) + padding * 2;
+    float boxHeight = numSize.y + textSize.y + lineSpacing + padding * 2;
+    ImVec2 boxCenter = fpsPosition;
+    boxCenter.x = ImClamp(boxCenter.x, boxWidth/2, displaySize.x - boxWidth/2);
+    boxCenter.y = ImClamp(boxCenter.y, boxHeight/2, displaySize.y - boxHeight/2);
+    ImVec2 boxPos(boxCenter.x - boxWidth / 2, boxCenter.y - boxHeight / 2);
+    ImRect boxRect(boxPos, ImVec2(boxPos.x + boxWidth, boxPos.y + boxHeight));
     
-    // PING с цветами (симуляция, можно заменить на реальный пинг)
-    static int currentPing = 45; // TODO: получать реальный пинг из игры
+    bool isMouseOverBox = boxRect.Contains(io.MousePos);
     
-    // Определяем цвет пинга
-    ImVec4 pingColor;
-    if (currentPing >= 150) {
-        pingColor = ImVec4(1.0f, 0.0f, 0.0f, 1.0f); // Красный
-    } else if (currentPing >= 50) {
-        pingColor = ImVec4(1.0f, 1.0f, 0.0f, 1.0f); // Жёлтый
-    } else {
-        pingColor = ImVec4(0.0f, 1.0f, 0.0f, 1.0f); // Зелёный
+    // Drag & Drop ТОЛЬКО когда меню открыто
+    if (canDrag && isMouseOverBox && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        fpsDragging = true;
+        fpsDragOffset = ImVec2(io.MousePos.x - boxCenter.x, io.MousePos.y - boxCenter.y);
     }
     
-    char pingText[64];
-    snprintf(pingText, sizeof(pingText), "PING: %dms", currentPing);
+    if (fpsDragging) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && canDrag) {
+            fpsPosition = ImVec2(io.MousePos.x - fpsDragOffset.x, io.MousePos.y - fpsDragOffset.y);
+        } else {
+            fpsDragging = false;
+        }
+    }
     
-    ImVec2 pingTextSize = ImGui::GetFont()->CalcTextSizeA(fpsFontSize, FLT_MAX, 0.0f, pingText);
-    ImVec2 pingPos = ImVec2(fpsPos.x, fpsPos.y + fpsTextSize.y + 20);
+    float alphaMultiplier = fpsDragging ? 0.7f : 1.0f;
     
-    // Фон для PING
-    dl->AddRectFilled(ImVec2(pingPos.x - 16, pingPos.y - 10),
-                      ImVec2(pingPos.x + pingTextSize.x + 16, pingPos.y + pingTextSize.y + 10),
-                      ImGui::ColorConvertFloat4ToU32(ImVec4(0, 0, 0, 0.70f)), 10.0f);
+    ImU32 bgColor = IM_COL32(0, 0, 0, (int)(160 * alphaMultiplier));
+    ImU32 borderColor = IM_COL32(80, 80, 80, (int)(200 * alphaMultiplier));
+    ImU32 accentColor = IM_COL32(100, 180, 255, (int)(255 * alphaMultiplier));
+    ImU32 textColor = IM_COL32(255, 255, 255, (int)(255 * alphaMultiplier));
     
-    // Рисуем PING цветным текстом
-    dl->AddText(ImGui::GetFont(), fpsFontSize, pingPos,
-                ImGui::ColorConvertFloat4ToU32(pingColor), pingText);
+    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+    drawList->AddRectFilled(boxPos,
+                            ImVec2(boxPos.x + boxWidth, boxPos.y + boxHeight),
+                            bgColor, cornerRounding);
+    
+    drawList->AddRect(boxPos,
+                      ImVec2(boxPos.x + boxWidth, boxPos.y + boxHeight),
+                      borderColor, cornerRounding, 0, 1.5f);
+    
+    const float arcThickness = 2.0f;
+    float arcRadius = boxWidth * 0.4f;
+    drawList->PathArcTo(boxCenter, arcRadius, IM_PI * 0.7f, IM_PI * 0.3f, 32);
+    drawList->PathStroke(accentColor, 0, arcThickness);
+    
+    float totalTextHeight = numSize.y + lineSpacing + textSize.y;
+    float numPosY = boxCenter.y - totalTextHeight / 2;
+    float fpsPosY = numPosY + numSize.y + lineSpacing - 5.0f;
+    ImVec2 numPos(boxCenter.x - numSize.x / 2, numPosY);
+    ImVec2 textPos(boxCenter.x - textSize.x / 2, fpsPosY);
+    
+    ImU32 fpsColor = textColor;
+    float fpsValue = io.Framerate;
+    
+    if (fpsValue < 30.0f) {
+        fpsColor = IM_COL32(255, 100, 100, (int)(255 * alphaMultiplier));
+    } else if (fpsValue < 60.0f) {
+        fpsColor = IM_COL32(255, 200, 100, (int)(255 * alphaMultiplier));
+    } else {
+        fpsColor = IM_COL32(150, 255, 150, (int)(255 * alphaMultiplier));
+    }
+    
+    drawList->AddText(NULL, fontSize,
+                      ImVec2(numPos.x + 1, numPos.y + 1),
+                      IM_COL32(0, 0, 0, (int)(100 * alphaMultiplier)), fpsNumBuffer);
+    drawList->AddText(NULL, fontSize, numPos, fpsColor, fpsNumBuffer);
+    
+    drawList->AddText(NULL, titleFontSize,
+                      ImVec2(textPos.x + 1, textPos.y + 1),
+                      IM_COL32(0, 0, 0, (int)(100 * alphaMultiplier)), fpsText);
+    drawList->AddText(NULL, titleFontSize, textPos, accentColor, fpsText);
+    
+    const float dotRadius = 2.0f;
+    ImVec2 corners[] = {
+        ImVec2(boxPos.x + cornerRounding, boxPos.y + cornerRounding),
+        ImVec2(boxPos.x + boxWidth - cornerRounding, boxPos.y + cornerRounding),
+        ImVec2(boxPos.x + cornerRounding, boxPos.y + boxHeight - cornerRounding),
+        ImVec2(boxPos.x + boxWidth - cornerRounding, boxPos.y + boxHeight - cornerRounding)
+    };
+    
+    for (const auto& corner : corners) {
+        drawList->AddCircleFilled(corner, dotRadius, accentColor);
+    }
+    
+    ImU32 statusColor = (fpsValue >= 60) ? IM_COL32(100, 255, 100, (int)(255 * alphaMultiplier)) :
+                        (fpsValue >= 30) ? IM_COL32(255, 200, 50, (int)(255 * alphaMultiplier)) :
+                                          IM_COL32(255, 80, 80, (int)(255 * alphaMultiplier));
+    
+    drawList->AddCircleFilled(
+        ImVec2(boxPos.x + boxWidth - cornerRounding, boxPos.y + cornerRounding),
+        3.0f, statusColor
+    );
+    
+    if (canDrag && isMouseOverBox && !fpsDragging) {
+        static float hoverAlpha = 0.0f;
+        hoverAlpha = ImClamp(hoverAlpha + io.DeltaTime * 4.0f, 0.0f, 0.3f);
+        drawList->AddRect(boxPos,
+                          ImVec2(boxPos.x + boxWidth, boxPos.y + boxHeight),
+                          IM_COL32(255, 255, 255, (int)(100 * hoverAlpha * alphaMultiplier)),
+                          cornerRounding, 0, 2.0f);
+    }
 }
 
 // FPS-ANALIZE: график истории FPS
 static float fpsHistory[100] = {0};
 static int fpsHistoryIndex = 0;
+static bool fpsHistoryInitialized = false;
 
 void DrawFPSGraph() {
     if (!g_Menu.showFPSGraph) return;
     
     ImGuiIO& io = ImGui::GetIO();
     ThemeColors tc = GetThemeColors(g_Menu.currentTheme);
+    bool canDrag = g_Menu.isOpen; // Можно двигать ТОЛЬКО когда меню открыто
     
-    // Обновляем историю FPS
-    fpsHistory[fpsHistoryIndex] = io.Framerate;
+    float currentFPS = io.Framerate;
+    
+    // Инициализируем историю первым значением
+    if (!fpsHistoryInitialized) {
+        for (int i = 0; i < 100; i++) {
+            fpsHistory[i] = currentFPS;
+        }
+        graphPosition = ImVec2(glWidth - 320, glHeight - 140);
+        fpsHistoryInitialized = true;
+    }
+    
+    // Обновляем историю FPS каждый кадр
+    fpsHistory[fpsHistoryIndex] = currentFPS;
     fpsHistoryIndex = (fpsHistoryIndex + 1) % 100;
     
-    // Позиция графика (справа снизу)
+    // Размеры графика
     float graphWidth = 300.0f;
     float graphHeight = 120.0f;
-    ImVec2 graphPos = ImVec2(glWidth - graphWidth - 20, glHeight - graphHeight - 20);
+    ImVec2 graphPos = graphPosition;
+    
+    // Ограничиваем позицию экраном
+    graphPos.x = ImClamp(graphPos.x, 0.0f, glWidth - graphWidth);
+    graphPos.y = ImClamp(graphPos.y, 0.0f, glHeight - graphHeight);
+    
+    ImRect graphRect(graphPos, ImVec2(graphPos.x + graphWidth, graphPos.y + graphHeight));
+    bool isMouseOverGraph = graphRect.Contains(io.MousePos);
+    
+    // Drag & Drop ТОЛЬКО когда меню открыто
+    if (canDrag && isMouseOverGraph && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        graphDragging = true;
+        graphDragOffset = ImVec2(io.MousePos.x - graphPos.x, io.MousePos.y - graphPos.y);
+    }
+    
+    if (graphDragging) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && canDrag) {
+            graphPosition = ImVec2(io.MousePos.x - graphDragOffset.x, io.MousePos.y - graphDragOffset.y);
+            graphPos = graphPosition;
+        } else {
+            graphDragging = false;
+        }
+    }
+    
+    float alphaMultiplier = graphDragging ? 0.7f : 1.0f;
     
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
     
@@ -635,7 +764,7 @@ void DrawFPSGraph() {
     dl->AddRectFilled(
         graphPos,
         ImVec2(graphPos.x + graphWidth, graphPos.y + graphHeight),
-        ImGui::ColorConvertFloat4ToU32(ImVec4(0, 0, 0, 0.75f)),
+        IM_COL32(0, 0, 0, (int)(190 * alphaMultiplier)),
         8.0f
     );
     
@@ -643,14 +772,14 @@ void DrawFPSGraph() {
     dl->AddRect(
         graphPos,
         ImVec2(graphPos.x + graphWidth, graphPos.y + graphHeight),
-        ImGui::ColorConvertFloat4ToU32(ImVec4(0.3f, 0.3f, 0.3f, 1.0f)),
+        IM_COL32(80, 80, 80, (int)(200 * alphaMultiplier)),
         8.0f,
         0,
         1.5f
     );
     
     // Находим min/max FPS для масштабирования
-    float minFPS = 999.0f, maxFPS = 0.0f;
+    float minFPS = currentFPS, maxFPS = currentFPS;
     for (int i = 0; i < 100; i++) {
         if (fpsHistory[i] > 0) {
             if (fpsHistory[i] < minFPS) minFPS = fpsHistory[i];
@@ -658,20 +787,23 @@ void DrawFPSGraph() {
         }
     }
     
+    // Минимальный диапазон 10 FPS
     if (maxFPS - minFPS < 10.0f) {
-        minFPS = maxFPS - 10.0f;
+        float avg = (maxFPS + minFPS) / 2.0f;
+        minFPS = avg - 5.0f;
+        maxFPS = avg + 5.0f;
         if (minFPS < 0) minFPS = 0;
     }
     
     // Рисуем линию графика
-    ImVec2 prevPoint;
+    ImVec2 prevPoint(0, 0);
     bool firstPoint = true;
     
     for (int i = 0; i < 100; i++) {
         int idx = (fpsHistoryIndex + i) % 100;
         float fps = fpsHistory[idx];
         
-        if (fps <= 0) continue;
+        if (fps <= 0) fps = currentFPS;
         
         // Нормализуем FPS к высоте графика
         float normalized = (fps - minFPS) / (maxFPS - minFPS + 0.001f);
@@ -686,11 +818,11 @@ void DrawFPSGraph() {
             // Цвет линии в зависимости от FPS
             ImU32 lineColor;
             if (fps >= 55) {
-                lineColor = IM_COL32(0, 255, 0, 255); // Зелёный = хороший FPS
+                lineColor = IM_COL32(150, 255, 150, (int)(255 * alphaMultiplier));
             } else if (fps >= 30) {
-                lineColor = IM_COL32(255, 255, 0, 255); // Жёлтый = средний
+                lineColor = IM_COL32(255, 200, 100, (int)(255 * alphaMultiplier));
             } else {
-                lineColor = IM_COL32(255, 0, 0, 255); // Красный = плохой
+                lineColor = IM_COL32(255, 100, 100, (int)(255 * alphaMultiplier));
             }
             
             dl->AddLine(prevPoint, point, lineColor, 2.0f);
@@ -703,10 +835,22 @@ void DrawFPSGraph() {
     // Текст с текущим FPS и min/max
     char infoText[128];
     snprintf(infoText, sizeof(infoText), "FPS: %.0f  Min: %.0f  Max: %.0f", 
-             io.Framerate, minFPS, maxFPS);
+             currentFPS, minFPS, maxFPS);
     
     ImVec2 textPos = ImVec2(graphPos.x + 10, graphPos.y + 8);
-    dl->AddText(textPos, ImGui::ColorConvertFloat4ToU32(tc.text), infoText);
+    dl->AddText(textPos, IM_COL32(255, 255, 255, (int)(255 * alphaMultiplier)), infoText);
+    
+    // Подсветка при наведении (ТОЛЬКО когда меню открыто)
+    if (canDrag && isMouseOverGraph && !graphDragging) {
+        dl->AddRect(
+            graphPos,
+            ImVec2(graphPos.x + graphWidth, graphPos.y + graphHeight),
+            IM_COL32(255, 255, 255, 80),
+            8.0f,
+            0,
+            2.0f
+        );
+    }
 }
 
 void DrawClock() {
@@ -753,19 +897,39 @@ void DrawCoordsWindow() {
     }
 
     ThemeColors tc = GetThemeColors(g_Menu.currentTheme);
-    ImVec2 pos = g_Menu.showClock
-                 ? ImVec2(g_Menu.clockPos.x, g_Menu.clockPos.y + 58.0f)
-                 : ImVec2(glWidth - 240.0f, 90.0f);
+    ImGuiIO& io = ImGui::GetIO();
+    bool canDrag = g_Menu.isOpen; // Можно двигать ТОЛЬКО когда меню открыто
+    
+    // Инициализация позиции при первом запуске
+    static bool coordsInitialized = false;
+    if (!coordsInitialized) {
+        coordsPosition = g_Menu.showClock
+                         ? ImVec2(g_Menu.clockPos.x, g_Menu.clockPos.y + 58.0f)
+                         : ImVec2(glWidth - 240.0f, 90.0f);
+        coordsInitialized = true;
+    }
 
-    ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+    ImGui::SetNextWindowPos(coordsPosition, canDrag ? ImGuiCond_Once : ImGuiCond_Always);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0.72f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 10));
 
-    ImGui::Begin("CoordsOverlay", nullptr,
-                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                 ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoScrollbar |
-                 ImGuiWindowFlags_NoSavedSettings);
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoScrollbar |
+                             ImGuiWindowFlags_NoSavedSettings;
+    
+    // Разрешаем перемещение ТОЛЬКО когда меню открыто
+    if (!canDrag) {
+        flags |= ImGuiWindowFlags_NoMove;
+    }
+
+    ImGui::Begin("CoordsOverlay", nullptr, flags);
+    
+    // Обновляем позицию если двигали
+    if (canDrag && ImGui::IsWindowHovered() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+        coordsPosition = ImGui::GetWindowPos();
+    }
+    
     ImGui::TextColored(tc.textDim, "Coords");
     ImGui::Separator();
     ImGui::TextColored(tc.text, "X: %.2f", x);
@@ -916,7 +1080,7 @@ void DrawJsonLogWindow() {
     ImGui::End();
 }
 
-// ==================== ESP RENDERING ====================
+// ==================== ESP RENDERING (2D RADAR) ====================
 void DrawESP() {
     if (!g_Menu.espEnabled) return;
     if (libaddr == 0) return;
@@ -932,96 +1096,98 @@ void DrawESP() {
     g_Menu.screenWidth = (int)io.DisplaySize.x;
     g_Menu.screenHeight = (int)io.DisplaySize.y;
     
-    // Check ViewMatrix pointer before using
-    qword viewMatrixPtrAddr = libaddr + OFFSET_VIEWMATRIX_PTR;
-    if (viewMatrixPtrAddr == 0) return;
-    
-    qword viewMatrixPtr = *(qword*)viewMatrixPtrAddr;
-    if (viewMatrixPtr == 0) return;
-    
     ImDrawList* draw = ImGui::GetForegroundDrawList();
+    
+    // 2D Radar settings
+    float radarSize = 200.0f;
+    float radarScale = 10.0f; // 1 pixel = 10 meters
+    ImVec2 radarCenter = ImVec2(g_Menu.screenWidth - radarSize - 20, radarSize + 20);
+    
+    // Draw radar background
+    draw->AddRectFilled(
+        ImVec2(radarCenter.x - radarSize/2, radarCenter.y - radarSize/2),
+        ImVec2(radarCenter.x + radarSize/2, radarCenter.y + radarSize/2),
+        IM_COL32(0, 0, 0, 150),
+        10.0f
+    );
+    
+    // Draw radar border
+    draw->AddRect(
+        ImVec2(radarCenter.x - radarSize/2, radarCenter.y - radarSize/2),
+        ImVec2(radarCenter.x + radarSize/2, radarCenter.y + radarSize/2),
+        IM_COL32(100, 100, 100, 255),
+        10.0f,
+        0,
+        2.0f
+    );
+    
+    // Draw center (local player)
+    draw->AddCircleFilled(radarCenter, 5.0f, IM_COL32(0, 255, 0, 255));
+    
+    // ESP color
+    ImU32 espColor = IM_COL32(
+        (int)(g_Menu.espColor[0] * 255),
+        (int)(g_Menu.espColor[1] * 255),
+        (int)(g_Menu.espColor[2] * 255),
+        255
+    );
+    
+    int playersDrawn = 0;
     
     // Loop through all players
     for (int i = 0; i < 1000; i++) {
         qword player = GetPlayerByID(i);
         if (!IsPlayerValid(player)) continue;
-        if (player == localPlayer) continue; // Skip self
+        if (player == localPlayer) continue;
         
         float px, py, pz;
         GetPlayerPos(player, px, py, pz);
         
-        // Calculate distance
+        // Calculate relative position
         float dx = px - localX;
         float dy = py - localY;
         float dz = pz - localZ;
         float distance = sqrtf(dx*dx + dy*dy + dz*dz);
         
         if (distance > g_Menu.espMaxDistance) continue;
-        if (distance < 0.1f) continue; // Too close, probably invalid
+        if (distance < 0.1f) continue;
         
-        // World to screen
-        float screenX, screenY;
-        if (!WorldToScreen(px, py, pz, screenX, screenY)) continue;
+        // Convert to radar coordinates
+        float radarX = radarCenter.x + (dx / radarScale);
+        float radarY = radarCenter.y - (dy / radarScale);
         
-        // Get ESP color
-        ImU32 color = IM_COL32(
-            (int)(g_Menu.espColor[0] * 255),
-            (int)(g_Menu.espColor[1] * 255),
-            (int)(g_Menu.espColor[2] * 255),
-            255
-        );
+        // Check if within radar bounds
+        if (radarX < radarCenter.x - radarSize/2 || radarX > radarCenter.x + radarSize/2) continue;
+        if (radarY < radarCenter.y - radarSize/2 || radarY > radarCenter.y + radarSize/2) continue;
         
-        // Draw ESP Box
-        if (g_Menu.espBox) {
-            float boxHeight = 2000.0f / (distance + 1.0f); // Approximate height based on distance
-            float boxWidth = boxHeight * 0.5f;
-            
-            draw->AddRect(
-                ImVec2(screenX - boxWidth/2, screenY - boxHeight),
-                ImVec2(screenX + boxWidth/2, screenY),
-                color,
-                0.0f,
-                0,
-                2.0f
-            );
-        }
+        // Draw player dot
+        draw->AddCircleFilled(ImVec2(radarX, radarY), 4.0f, espColor);
         
-        // Draw Snapline
-        if (g_Menu.espSnapline) {
-            draw->AddLine(
-                ImVec2(g_Menu.screenWidth / 2.0f, g_Menu.screenHeight),
-                ImVec2(screenX, screenY),
-                color,
-                1.5f
-            );
-        }
-        
-        // Draw Distance
+        // Draw distance text
         if (g_Menu.espDistance) {
             char distText[32];
             snprintf(distText, sizeof(distText), "%.0fm", distance);
-            draw->AddText(ImVec2(screenX + 5, screenY), color, distText);
+            draw->AddText(ImVec2(radarX + 6, radarY - 6), espColor, distText);
         }
         
-        // Draw Health
+        // Draw health
         if (g_Menu.espHealth) {
             float health = GetPlayerHealth(player);
-            if (health > 0 && health <= 1000) { // Sanity check
-                float healthPercent = health / 1000.0f;
-                
-                ImU32 healthColor = IM_COL32(
-                    (int)((1.0f - healthPercent) * 255),
-                    (int)(healthPercent * 255),
-                    0,
-                    255
-                );
-                
-                char healthText[32];
-                snprintf(healthText, sizeof(healthText), "HP: %.0f", health);
-                draw->AddText(ImVec2(screenX + 5, screenY + 15), healthColor, healthText);
+            if (health > 0 && health <= 1000) {
+                char hpText[32];
+                snprintf(hpText, sizeof(hpText), "%.0f", health);
+                draw->AddText(ImVec2(radarX + 6, radarY + 6), IM_COL32(255, 255, 0, 255), hpText);
             }
         }
+        
+        playersDrawn++;
     }
+    
+    // Draw radar title
+    char radarTitle[64];
+    snprintf(radarTitle, sizeof(radarTitle), "RADAR [%d]", playersDrawn);
+    draw->AddText(ImVec2(radarCenter.x - radarSize/2 + 10, radarCenter.y - radarSize/2 + 10), 
+                  IM_COL32(255, 255, 255, 255), radarTitle);
 }
 // ==================== END ESP RENDERING ====================
 
