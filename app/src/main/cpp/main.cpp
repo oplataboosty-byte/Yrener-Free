@@ -29,6 +29,73 @@
 
 extern qword g_PlayerPoolPtr;
 
+// ==================== CHAMS (PLAYER HIGHLIGHTING) ====================
+// OpenGL function pointers for hooking
+typedef void (*glDrawElements_t)(GLenum mode, GLsizei count, GLenum type, const GLvoid* indices);
+typedef void (*glDrawArrays_t)(GLenum mode, GLint first, GLsizei count);
+
+glDrawElements_t orig_glDrawElements = nullptr;
+glDrawArrays_t orig_glDrawArrays = nullptr;
+
+// Chams state
+bool g_IsDrawingPlayer = false;
+ImVec4 g_ChamsColorVisible = ImVec4(0.0f, 1.0f, 0.0f, 1.0f);  // Green for visible
+ImVec4 g_ChamsColorHidden = ImVec4(1.0f, 0.0f, 0.0f, 0.8f);   // Red for hidden (through walls)
+
+// Player mesh detection heuristic
+// Typical player meshes have between 500-5000 vertices
+bool IsLikelyPlayerMesh(GLsizei count) {
+    return (count >= 500 && count <= 5000);
+}
+
+// Hook glDrawElements for Chams
+void hook_glDrawElements(GLenum mode, GLsizei count, GLenum type, const GLvoid* indices) {
+    // Auto-detect player mesh rendering
+    if (g_Menu.chamsEnabled && IsLikelyPlayerMesh(count)) {
+        // First pass: Draw player through walls (occluded color - red)
+        glDisable(GL_DEPTH_TEST);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        
+        // TODO: Set occluded color via shader uniform if available
+        
+        orig_glDrawElements(mode, count, type, indices);
+        
+        // Second pass: Draw player normally with depth test (visible color - green)
+        glEnable(GL_DEPTH_TEST);
+        
+        // TODO: Set visible color via shader uniform if available
+        
+        orig_glDrawElements(mode, count, type, indices);
+        
+        glDisable(GL_BLEND);
+    } else {
+        orig_glDrawElements(mode, count, type, indices);
+    }
+}
+
+// Hook glDrawArrays for Chams
+void hook_glDrawArrays(GLenum mode, GLint first, GLsizei count) {
+    // Auto-detect player mesh rendering
+    if (g_Menu.chamsEnabled && IsLikelyPlayerMesh(count)) {
+        // First pass: Draw through walls (occluded)
+        glDisable(GL_DEPTH_TEST);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        
+        orig_glDrawArrays(mode, first, count);
+        
+        // Second pass: Draw normally (visible)
+        glEnable(GL_DEPTH_TEST);
+        
+        orig_glDrawArrays(mode, first, count);
+        
+        glDisable(GL_BLEND);
+    } else {
+        orig_glDrawArrays(mode, first, count);
+    }
+}
+
 JavaVM* g_JavaVM = nullptr;
 JNIEnv* g_MainEnv = nullptr;
 int glWidth = 0;
@@ -206,10 +273,92 @@ bool IsPlayerValid(qword playerPtr) {
     return health > 0.0f;
 }
 
+// ==================== VIEWMATRIX BRUTE-FORCE SCANNER ====================
+// Проверка валидности матрицы
+bool IsMatrixValid(float* matrix) {
+    if (!matrix) return false;
+    
+    int validCount = 0;
+    int zeroCount = 0;
+    
+    for (int i = 0; i < 16; i++) {
+        float val = matrix[i];
+        
+        // Проверка на NaN и Infinity
+        if (isnan(val) || isinf(val)) return false;
+        
+        // Подсчёт нулей (все нули = невалидно)
+        if (val == 0.0f) zeroCount++;
+        
+        // Разумные значения для ViewMatrix обычно в диапазоне -100 до +100
+        if (val >= -100.0f && val <= 100.0f) validCount++;
+    }
+    
+    // Матрица не должна быть полностью нулевой
+    if (zeroCount == 16) return false;
+    
+    // Хотя бы 12 элементов должны быть в разумном диапазоне
+    if (validCount < 12) return false;
+    
+    // Проверка что матрица не единичная (identity matrix - бесполезна)
+    if (matrix[0] == 1.0f && matrix[5] == 1.0f && matrix[10] == 1.0f && matrix[15] == 1.0f &&
+        zeroCount >= 12) {
+        return false; // Identity matrix
+    }
+    
+    return true;
+}
+
+// Брутфорс поиск ViewMatrix в возможных адресах
+qword FindViewMatrixAddress() {
+    if (libaddr == 0) return 0;
+    
+    // Массив возможных базовых адресов для поиска
+    qword possibleBases[] = {
+        libaddr + 0x264F700,  // Текущий offset (может быть неправильный)
+        libaddr + 0x13cb480,  // .bss секция
+        libaddr + 0x1359a80,  // .data секция  
+        libaddr + 0x1286c00,  // .data.rel.ro секция
+    };
+    
+    // Возможные offsetы внутри структуры камеры/сцены
+    int offsets[] = {
+        0x00, 0x08, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38,
+        0x40, 0x48, 0x50, 0x60, 0x70, 0x80, 0x90, 0xA0,
+        0xC0, 0x100, 0x120, 0x140, 0x180, 0x200
+    };
+    
+    for (qword base : possibleBases) {
+        for (int offset : offsets) {
+            qword addr = base + offset;
+            
+            // Проверка валидности адреса
+            if (addr < 0x1000 || addr > 0x7FFFFFFFFFFF) continue;
+            
+            // Безопасное чтение возможной матрицы
+            float* possibleMatrix = (float*)addr;
+            if (IsMatrixValid(possibleMatrix)) {
+                // НАШЛИ ВАЛИДНУЮ МАТРИЦУ!
+                LOGI("★★★ FOUND VALID VIEWMATRIX at 0x%llX (base+0x%X) ★★★", addr, offset);
+                
+                // Логируем первые 4 значения для отладки
+                LOGI("Matrix[0-3]: %.3f, %.3f, %.3f, %.3f", 
+                    possibleMatrix[0], possibleMatrix[1], possibleMatrix[2], possibleMatrix[3]);
+                
+                return addr;
+            }
+        }
+    }
+    
+    LOGI("⚠️ ViewMatrix NOT FOUND in scan!");
+    return 0;
+}
+
 // ==================== PUBG-STYLE WORLDTOSCREEN (MULTI-METHOD) ====================
 // ViewMatrix storage
 static float g_ViewMatrix[16] = {0};
 static bool g_MatrixInitialized = false;
+static qword g_ViewMatrixAddr = 0;  // Найденный адрес ViewMatrix
 
 enum ESP_METHOD {
     ESP_METHOD_NONE = 0,
@@ -239,30 +388,37 @@ ImVec2 WorldToScreenDirect(float worldX, float worldY, float worldZ, float matri
     return ImVec2(x, y);
 }
 
-// Try Method 1: Direct ViewMatrix read from offset
+// Try Method 1: Direct ViewMatrix read using brute-force scanner
 bool TryMethod_DirectMatrix() {
     if (libaddr == 0) return false;
     
-    qword viewMatrixPtrAddr = libaddr + OFFSET_VIEWMATRIX_PTR;
-    if (viewMatrixPtrAddr < 0x1000 || viewMatrixPtrAddr > 0x7FFFFFFFFFFF) return false;
+    // Если адрес ViewMatrix ещё не найден, запускаем brute-force сканер
+    if (g_ViewMatrixAddr == 0) {
+        LOGI("🔍 Starting ViewMatrix brute-force scan...");
+        g_ViewMatrixAddr = FindViewMatrixAddress();
+        
+        if (g_ViewMatrixAddr == 0) {
+            LOGI("❌ ViewMatrix scan failed - no valid matrix found");
+            return false;
+        }
+        
+        LOGI("✅ ViewMatrix found at: 0x%llX", g_ViewMatrixAddr);
+    }
     
-    qword viewMatrixPtr = *(qword*)viewMatrixPtrAddr;
-    if (viewMatrixPtr == 0 || viewMatrixPtr < 0x1000 || viewMatrixPtr > 0x7FFFFFFFFFFF) return false;
+    // Читаем матрицу с найденного адреса
+    float* matrixData = (float*)g_ViewMatrixAddr;
     
-    // Read 16 floats
-    float* matrixData = (float*)viewMatrixPtr;
+    // Копируем в глобальный массив
     for (int i = 0; i < 16; i++) {
         g_ViewMatrix[i] = matrixData[i];
     }
     
-    // Validate matrix (check if values are reasonable)
-    bool hasNonZero = false;
-    for (int i = 0; i < 16; i++) {
-        if (g_ViewMatrix[i] != 0.0f) hasNonZero = true;
-        if (isnan(g_ViewMatrix[i]) || isinf(g_ViewMatrix[i])) return false; // Invalid matrix
+    // Финальная проверка валидности
+    if (!IsMatrixValid(g_ViewMatrix)) {
+        LOGI("⚠️ ViewMatrix became invalid - re-scanning next frame...");
+        g_ViewMatrixAddr = 0; // Reset для повторного поиска
+        return false;
     }
-    
-    if (!hasNonZero) return false; // All zeros = invalid
     
     g_MatrixInitialized = true;
     g_CurrentESPMethod = ESP_METHOD_MATRIX_DIRECT;
@@ -746,8 +902,8 @@ void DrawFPS() {
     sprintf(fpsNumBuffer, "%.0f", io.Framerate);
     
     const char* fpsText = "FPS";
-    const float fontSize = 36.0f;
-    const float titleFontSize = 18.0f;
+    const float fontSize = 48.0f;  // Было 36.0f - УВЕЛИЧЕНО!
+    const float titleFontSize = 24.0f;  // Было 18.0f - УВЕЛИЧЕНО!
     
     ImVec2 displaySize = io.DisplaySize;
     ImFont* font = ImGui::GetFont();
@@ -758,8 +914,8 @@ void DrawFPS() {
     textSize.x *= (titleFontSize / font->FontSize);
     textSize.y *= (titleFontSize / font->FontSize);
     
-    const float padding = 20.0f;
-    const float lineSpacing = 8.0f;
+    const float padding = 25.0f;  // Было 20.0f - УВЕЛИЧЕНО!
+    const float lineSpacing = 10.0f;  // Было 8.0f - УВЕЛИЧЕНО!
     const float cornerRounding = 15.0f;
     float boxWidth = fmax(numSize.x, textSize.x) + padding * 2;
     float boxHeight = numSize.y + textSize.y + lineSpacing + padding * 2;
@@ -1876,8 +2032,21 @@ void hook_entry() {
     void* eglAddr = dlsym(RTLD_NEXT, "eglSwapBuffers");
     if (eglAddr) {
         DobbyHook(eglAddr, (void*)hook_eglSwapBuffers, (void**)&old_eglSwapBuffers);
-
     }
+    
+    // OpenGL hooks for Chams
+    void* glDrawElementsAddr = dlsym(RTLD_NEXT, "glDrawElements");
+    if (glDrawElementsAddr) {
+        DobbyHook(glDrawElementsAddr, (void*)hook_glDrawElements, (void**)&orig_glDrawElements);
+        LOGI("✅ Hooked glDrawElements for Chams");
+    }
+    
+    void* glDrawArraysAddr = dlsym(RTLD_NEXT, "glDrawArrays");
+    if (glDrawArraysAddr) {
+        DobbyHook(glDrawArraysAddr, (void*)hook_glDrawArrays, (void**)&orig_glDrawArrays);
+        LOGI("✅ Hooked glDrawArrays for Chams");
+    }
+    
     // MultiTouch hook
     void* lib = dlopen("libblackrussia-client.so", RTLD_LAZY);
     if (lib) {
