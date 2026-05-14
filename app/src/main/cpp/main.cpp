@@ -88,7 +88,12 @@ qword GetLocalPlayer() {
 // Get player health
 float GetPlayerHealth(qword playerPtr) {
     if (playerPtr == 0) return 0.0f;
-    return *(float*)(playerPtr + OFFSET_HEALTH);
+    if (playerPtr < 0x1000 || playerPtr > 0x7FFFFFFFFFFF) return 0.0f;
+    
+    qword healthAddr = playerPtr + OFFSET_HEALTH;
+    if (healthAddr < 0x1000 || healthAddr > 0x7FFFFFFFFFFF) return 0.0f;
+    
+    return *(float*)healthAddr;
 }
 
 // Set player health
@@ -115,9 +120,23 @@ void GetPlayerPos(qword playerPtr, float& x, float& y, float& z) {
         x = y = z = 0.0f;
         return;
     }
-    x = *(float*)(playerPtr + OFFSET_POS_X);
-    y = *(float*)(playerPtr + OFFSET_POS_Y);
-    z = *(float*)(playerPtr + OFFSET_POS_Z);
+    if (playerPtr < 0x1000 || playerPtr > 0x7FFFFFFFFFFF) {
+        x = y = z = 0.0f;
+        return;
+    }
+    
+    qword posXAddr = playerPtr + OFFSET_POS_X;
+    qword posYAddr = playerPtr + OFFSET_POS_Y;
+    qword posZAddr = playerPtr + OFFSET_POS_Z;
+    
+    if (posXAddr < 0x1000 || posXAddr > 0x7FFFFFFFFFFF) {
+        x = y = z = 0.0f;
+        return;
+    }
+    
+    x = *(float*)posXAddr;
+    y = *(float*)posYAddr;
+    z = *(float*)posZAddr;
 }
 
 // Set player position
@@ -148,10 +167,35 @@ qword GetPlayerByID(int playerID) {
     if (pool == 0) return 0;
     if (playerID < 0 || playerID >= 1000) return 0;
     
-    qword allPlayersArray = *(qword*)(pool + OFFSET_POOL_ALL_PLAYERS);
-    if (allPlayersArray == 0) return 0;
+    // Безопасное чтение указателя на массив игроков
+    qword allPlayersArray = 0;
+    qword poolArrayAddr = pool + OFFSET_POOL_ALL_PLAYERS;
     
-    qword playerPtr = *(qword*)(allPlayersArray + playerID * 8);
+    // Проверяем что адрес в разумных пределах (не null, не слишком маленький)
+    if (poolArrayAddr < 0x1000 || poolArrayAddr > 0x7FFFFFFFFFFF) {
+        return 0;
+    }
+    
+    allPlayersArray = *(qword*)poolArrayAddr;
+    
+    if (allPlayersArray == 0) return 0;
+    if (allPlayersArray < 0x1000 || allPlayersArray > 0x7FFFFFFFFFFF) {
+        return 0; // Невалидный адрес
+    }
+    
+    // Безопасное чтение указателя на конкретного игрока
+    qword playerPtrAddr = allPlayersArray + playerID * 8;
+    if (playerPtrAddr < 0x1000 || playerPtrAddr > 0x7FFFFFFFFFFF) {
+        return 0;
+    }
+    
+    qword playerPtr = *(qword*)playerPtrAddr;
+    
+    // Финальная проверка
+    if (playerPtr < 0x1000 || playerPtr > 0x7FFFFFFFFFFF) {
+        return 0;
+    }
+    
     return playerPtr;
 }
 
@@ -162,13 +206,22 @@ bool IsPlayerValid(qword playerPtr) {
     return health > 0.0f;
 }
 
-// ==================== PUBG-STYLE WORLDTOSCREEN ====================
+// ==================== PUBG-STYLE WORLDTOSCREEN (MULTI-METHOD) ====================
 // ViewMatrix storage
 static float g_ViewMatrix[16] = {0};
 static bool g_MatrixInitialized = false;
 
-// PUBG WorldToScreen function (using ImVec2 to avoid conflicts)
-ImVec2 WorldToScreenPUBG(float worldX, float worldY, float worldZ, float matrix[16], int screenWidth, int screenHeight) {
+enum ESP_METHOD {
+    ESP_METHOD_NONE = 0,
+    ESP_METHOD_MATRIX_DIRECT = 1,  // Прямое чтение матрицы (PUBG метод)
+    ESP_METHOD_MATRIX_CHAIN = 2,   // Цепочка указателей (PUBG метод 2)
+    ESP_METHOD_2D_RADAR = 3        // 2D радар (запасной)
+};
+
+static ESP_METHOD g_CurrentESPMethod = ESP_METHOD_NONE;
+
+// PUBG Method 1: Direct ViewMatrix read
+ImVec2 WorldToScreenDirect(float worldX, float worldY, float worldZ, float matrix[16], int screenWidth, int screenHeight) {
     float px = screenWidth / 2.0f;
     float py = screenHeight / 2.0f;
     
@@ -179,31 +232,94 @@ ImVec2 WorldToScreenPUBG(float worldX, float worldY, float worldZ, float matrix[
         return ImVec2(-999, -999); // Behind camera
     }
     
-    // Calculate screen coordinates
+    // Calculate screen coordinates (PUBG formula)
     float x = px + (matrix[0] * worldX + matrix[4] * worldY + matrix[8] * worldZ + matrix[12]) / ViewW * px;
     float y = py - (matrix[1] * worldX + matrix[5] * worldY + matrix[9] * worldZ + matrix[13]) / ViewW * py;
     
     return ImVec2(x, y);
 }
 
-// Update ViewMatrix (try multiple methods)
-bool UpdateViewMatrix() {
+// Try Method 1: Direct ViewMatrix read from offset
+bool TryMethod_DirectMatrix() {
     if (libaddr == 0) return false;
     
-    // Method 1: Try our offset
     qword viewMatrixPtrAddr = libaddr + OFFSET_VIEWMATRIX_PTR;
-    if (viewMatrixPtrAddr != 0) {
-        qword viewMatrixPtr = *(qword*)viewMatrixPtrAddr;
-        if (viewMatrixPtr != 0) {
-            float* matrixData = (float*)viewMatrixPtr;
-            for (int i = 0; i < 16; i++) {
-                g_ViewMatrix[i] = matrixData[i];
-            }
-            g_MatrixInitialized = true;
-            return true;
-        }
+    if (viewMatrixPtrAddr < 0x1000 || viewMatrixPtrAddr > 0x7FFFFFFFFFFF) return false;
+    
+    qword viewMatrixPtr = *(qword*)viewMatrixPtrAddr;
+    if (viewMatrixPtr == 0 || viewMatrixPtr < 0x1000 || viewMatrixPtr > 0x7FFFFFFFFFFF) return false;
+    
+    // Read 16 floats
+    float* matrixData = (float*)viewMatrixPtr;
+    for (int i = 0; i < 16; i++) {
+        g_ViewMatrix[i] = matrixData[i];
     }
     
+    // Validate matrix (check if values are reasonable)
+    bool hasNonZero = false;
+    for (int i = 0; i < 16; i++) {
+        if (g_ViewMatrix[i] != 0.0f) hasNonZero = true;
+        if (isnan(g_ViewMatrix[i]) || isinf(g_ViewMatrix[i])) return false; // Invalid matrix
+    }
+    
+    if (!hasNonZero) return false; // All zeros = invalid
+    
+    g_MatrixInitialized = true;
+    g_CurrentESPMethod = ESP_METHOD_MATRIX_DIRECT;
+    return true;
+}
+
+// Try Method 2: PUBG-style chain (libbase + HeaderDatei + 0xC0 + 0x9d0)
+bool TryMethod_ChainMatrix() {
+    if (libaddr == 0) return false;
+    
+    // Try PUBG-style offset chain
+    // For Black Russia, we don't have HeaderDatei, so try alternative chains
+    // This is experimental - may not work
+    
+    qword chain1 = libaddr + 0x2660610; // Our PlayerPool offset
+    if (chain1 < 0x1000) return false;
+    
+    qword chain2 = *(qword*)chain1;
+    if (chain2 == 0 || chain2 < 0x1000 || chain2 > 0x7FFFFFFFFFFF) return false;
+    
+    // Try reading matrix from different offset
+    qword matrixAddr = chain2 + 0x100; // Experimental offset
+    if (matrixAddr < 0x1000 || matrixAddr > 0x7FFFFFFFFFFF) return false;
+    
+    float* matrixData = (float*)matrixAddr;
+    for (int i = 0; i < 16; i++) {
+        g_ViewMatrix[i] = matrixData[i];
+    }
+    
+    // Validate
+    bool hasNonZero = false;
+    for (int i = 0; i < 16; i++) {
+        if (g_ViewMatrix[i] != 0.0f) hasNonZero = true;
+        if (isnan(g_ViewMatrix[i]) || isinf(g_ViewMatrix[i])) return false;
+    }
+    
+    if (!hasNonZero) return false;
+    
+    g_MatrixInitialized = true;
+    g_CurrentESPMethod = ESP_METHOD_MATRIX_CHAIN;
+    return true;
+}
+
+// Update ViewMatrix with multi-method approach
+bool UpdateViewMatrix() {
+    // Try Method 1 first (direct)
+    if (TryMethod_DirectMatrix()) {
+        return true;
+    }
+    
+    // Try Method 2 (chain)
+    if (TryMethod_ChainMatrix()) {
+        return true;
+    }
+    
+    // All methods failed, fall back to 2D Radar
+    g_CurrentESPMethod = ESP_METHOD_2D_RADAR;
     return false;
 }
 // ==================== END PUBG WORLDTOSCREEN ====================
@@ -1240,8 +1356,8 @@ void DrawESP() {
         
         if (distance > g_Menu.espMaxDistance || distance < 0.1f) continue;
         
-        // Use PUBG WorldToScreen
-        ImVec2 screen = WorldToScreenPUBG(px, py, pz, g_ViewMatrix, g_Menu.screenWidth, g_Menu.screenHeight);
+        // Use PUBG WorldToScreen (multi-method)
+        ImVec2 screen = WorldToScreenDirect(px, py, pz, g_ViewMatrix, g_Menu.screenWidth, g_Menu.screenHeight);
         
         if (screen.x < 0 || screen.x > g_Menu.screenWidth) continue;
         if (screen.y < 0 || screen.y > g_Menu.screenHeight) continue;
