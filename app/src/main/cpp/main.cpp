@@ -162,7 +162,61 @@ bool IsPlayerValid(qword playerPtr) {
     return health > 0.0f;
 }
 
-// WorldToScreen - convert 3D world coordinates to 2D screen coordinates
+// ==================== PUBG-STYLE WORLDTOSCREEN ====================
+// ViewMatrix storage
+static float g_ViewMatrix[16] = {0};
+static bool g_MatrixInitialized = false;
+
+struct Vector2 {
+    float x, y;
+};
+
+struct Vector3 {
+    float x, y, z;
+};
+
+// PUBG WorldToScreen function
+Vector2 WorldToScreenPUBG(Vector3 worldPos, float matrix[16], int screenWidth, int screenHeight) {
+    float px = screenWidth / 2.0f;
+    float py = screenHeight / 2.0f;
+    
+    // Calculate W (perspective divide) 
+    float ViewW = matrix[3] * worldPos.x + matrix[7] * worldPos.y + matrix[11] * worldPos.z + matrix[15];
+    
+    if (ViewW < 0.01f) {
+        return Vector2{-999, -999}; // Behind camera
+    }
+    
+    // Calculate screen coordinates
+    float x = px + (matrix[0] * worldPos.x + matrix[4] * worldPos.y + matrix[8] * worldPos.z + matrix[12]) / ViewW * px;
+    float y = py - (matrix[1] * worldPos.x + matrix[5] * worldPos.y + matrix[9] * worldPos.z + matrix[13]) / ViewW * py;
+    
+    return Vector2{x, y};
+}
+
+// Update ViewMatrix (try multiple methods)
+bool UpdateViewMatrix() {
+    if (libaddr == 0) return false;
+    
+    // Method 1: Try our offset
+    qword viewMatrixPtrAddr = libaddr + OFFSET_VIEWMATRIX_PTR;
+    if (viewMatrixPtrAddr != 0) {
+        qword viewMatrixPtr = *(qword*)viewMatrixPtrAddr;
+        if (viewMatrixPtr != 0) {
+            float* matrixData = (float*)viewMatrixPtr;
+            for (int i = 0; i < 16; i++) {
+                g_ViewMatrix[i] = matrixData[i];
+            }
+            g_MatrixInitialized = true;
+            return true;
+        }
+    }
+    
+    return false;
+}
+// ==================== END PUBG WORLDTOSCREEN ====================
+
+// Old WorldToScreen - convert 3D world coordinates to 2D screen coordinates
 bool WorldToScreen(float worldX, float worldY, float worldZ, float& screenX, float& screenY) {
     if (libaddr == 0) return false;
     
@@ -1080,7 +1134,7 @@ void DrawJsonLogWindow() {
     ImGui::End();
 }
 
-// ==================== ESP RENDERING (2D RADAR) ====================
+// ==================== ESP RENDERING (PUBG-STYLE 3D) ====================
 void DrawESP() {
     if (!g_Menu.espEnabled) return;
     if (libaddr == 0) return;
@@ -1091,50 +1145,94 @@ void DrawESP() {
     float localX, localY, localZ;
     GetPlayerPos(localPlayer, localX, localY, localZ);
     
-    // Update screen size
     ImGuiIO& io = ImGui::GetIO();
     g_Menu.screenWidth = (int)io.DisplaySize.x;
     g_Menu.screenHeight = (int)io.DisplaySize.y;
     
+    // Try to update ViewMatrix using PUBG method
+    if (!UpdateViewMatrix()) {
+        // Fallback to 2D Radar if ViewMatrix fails
+        ImDrawList* draw = ImGui::GetForegroundDrawList();
+        
+        // 2D Radar settings
+        float radarSize = 200.0f;
+        float radarScale = 10.0f;
+        ImVec2 radarCenter = ImVec2(g_Menu.screenWidth - radarSize - 20, radarSize + 20);
+        
+        draw->AddRectFilled(
+            ImVec2(radarCenter.x - radarSize/2, radarCenter.y - radarSize/2),
+            ImVec2(radarCenter.x + radarSize/2, radarCenter.y + radarSize/2),
+            IM_COL32(0, 0, 0, 150), 10.0f);
+        
+        draw->AddRect(
+            ImVec2(radarCenter.x - radarSize/2, radarCenter.y - radarSize/2),
+            ImVec2(radarCenter.x + radarSize/2, radarCenter.y + radarSize/2),
+            IM_COL32(100, 100, 100, 255), 10.0f, 0, 2.0f);
+        
+        draw->AddCircleFilled(radarCenter, 5.0f, IM_COL32(0, 255, 0, 255));
+        
+        ImU32 espColor = IM_COL32(
+            (int)(g_Menu.espColor[0] * 255),
+            (int)(g_Menu.espColor[1] * 255),
+            (int)(g_Menu.espColor[2] * 255), 255);
+        
+        int playersDrawn = 0;
+        
+        for (int i = 0; i < 1000; i++) {
+            qword player = GetPlayerByID(i);
+            if (!IsPlayerValid(player)) continue;
+            if (player == localPlayer) continue;
+            
+            float px, py, pz;
+            GetPlayerPos(player, px, py, pz);
+            
+            float dx = px - localX;
+            float dy = py - localY;
+            float dz = pz - localZ;
+            float distance = sqrtf(dx*dx + dy*dy + dz*dz);
+            
+            if (distance > g_Menu.espMaxDistance || distance < 0.1f) continue;
+            
+            float radarX = radarCenter.x + (dx / radarScale);
+            float radarY = radarCenter.y - (dy / radarScale);
+            
+            if (radarX < radarCenter.x - radarSize/2 || radarX > radarCenter.x + radarSize/2) continue;
+            if (radarY < radarCenter.y - radarSize/2 || radarY > radarCenter.y + radarSize/2) continue;
+            
+            draw->AddCircleFilled(ImVec2(radarX, radarY), 4.0f, espColor);
+            
+            if (g_Menu.espDistance) {
+                char distText[32];
+                snprintf(distText, sizeof(distText), "%.0fm", distance);
+                draw->AddText(ImVec2(radarX + 6, radarY - 6), espColor, distText);
+            }
+            
+            if (g_Menu.espHealth) {
+                float health = GetPlayerHealth(player);
+                if (health > 0 && health <= 1000) {
+                    char hpText[32];
+                    snprintf(hpText, sizeof(hpText), "%.0f", health);
+                    draw->AddText(ImVec2(radarX + 6, radarY + 6), IM_COL32(255, 255, 0, 255), hpText);
+                }
+            }
+            
+            playersDrawn++;
+        }
+        
+        char radarTitle[64];
+        snprintf(radarTitle, sizeof(radarTitle), "RADAR [%d]", playersDrawn);
+        draw->AddText(ImVec2(radarCenter.x - radarSize/2 + 10, radarCenter.y - radarSize/2 + 10), 
+                      IM_COL32(255, 255, 255, 255), radarTitle);
+        return;
+    }
+    
+    // 3D ESP using PUBG WorldToScreen
     ImDrawList* draw = ImGui::GetForegroundDrawList();
-    
-    // 2D Radar settings
-    float radarSize = 200.0f;
-    float radarScale = 10.0f; // 1 pixel = 10 meters
-    ImVec2 radarCenter = ImVec2(g_Menu.screenWidth - radarSize - 20, radarSize + 20);
-    
-    // Draw radar background
-    draw->AddRectFilled(
-        ImVec2(radarCenter.x - radarSize/2, radarCenter.y - radarSize/2),
-        ImVec2(radarCenter.x + radarSize/2, radarCenter.y + radarSize/2),
-        IM_COL32(0, 0, 0, 150),
-        10.0f
-    );
-    
-    // Draw radar border
-    draw->AddRect(
-        ImVec2(radarCenter.x - radarSize/2, radarCenter.y - radarSize/2),
-        ImVec2(radarCenter.x + radarSize/2, radarCenter.y + radarSize/2),
-        IM_COL32(100, 100, 100, 255),
-        10.0f,
-        0,
-        2.0f
-    );
-    
-    // Draw center (local player)
-    draw->AddCircleFilled(radarCenter, 5.0f, IM_COL32(0, 255, 0, 255));
-    
-    // ESP color
     ImU32 espColor = IM_COL32(
         (int)(g_Menu.espColor[0] * 255),
         (int)(g_Menu.espColor[1] * 255),
-        (int)(g_Menu.espColor[2] * 255),
-        255
-    );
+        (int)(g_Menu.espColor[2] * 255), 255);
     
-    int playersDrawn = 0;
-    
-    // Loop through all players
     for (int i = 0; i < 1000; i++) {
         qword player = GetPlayerByID(i);
         if (!IsPlayerValid(player)) continue;
@@ -1143,51 +1241,60 @@ void DrawESP() {
         float px, py, pz;
         GetPlayerPos(player, px, py, pz);
         
-        // Calculate relative position
         float dx = px - localX;
         float dy = py - localY;
         float dz = pz - localZ;
         float distance = sqrtf(dx*dx + dy*dy + dz*dz);
         
-        if (distance > g_Menu.espMaxDistance) continue;
-        if (distance < 0.1f) continue;
+        if (distance > g_Menu.espMaxDistance || distance < 0.1f) continue;
         
-        // Convert to radar coordinates
-        float radarX = radarCenter.x + (dx / radarScale);
-        float radarY = radarCenter.y - (dy / radarScale);
+        // Use PUBG WorldToScreen
+        Vector3 worldPos = {px, py, pz};
+        Vector2 screen = WorldToScreenPUBG(worldPos, g_ViewMatrix, g_Menu.screenWidth, g_Menu.screenHeight);
         
-        // Check if within radar bounds
-        if (radarX < radarCenter.x - radarSize/2 || radarX > radarCenter.x + radarSize/2) continue;
-        if (radarY < radarCenter.y - radarSize/2 || radarY > radarCenter.y + radarSize/2) continue;
+        if (screen.x < 0 || screen.x > g_Menu.screenWidth) continue;
+        if (screen.y < 0 || screen.y > g_Menu.screenHeight) continue;
         
-        // Draw player dot
-        draw->AddCircleFilled(ImVec2(radarX, radarY), 4.0f, espColor);
+        // Draw Box (PUBG style)
+        if (g_Menu.espBox) {
+            float boxHeight = 2000.0f / (distance + 1.0f);
+            float boxWidth = boxHeight * 0.5f;
+            
+            draw->AddRect(
+                ImVec2(screen.x - boxWidth/2, screen.y - boxHeight),
+                ImVec2(screen.x + boxWidth/2, screen.y),
+                espColor, 0.0f, 0, 2.0f);
+        }
         
-        // Draw distance text
+        // Draw Snapline
+        if (g_Menu.espSnapline) {
+            draw->AddLine(
+                ImVec2(g_Menu.screenWidth / 2.0f, g_Menu.screenHeight),
+                ImVec2(screen.x, screen.y),
+                espColor, 1.5f);
+        }
+        
+        // Draw Distance
         if (g_Menu.espDistance) {
             char distText[32];
             snprintf(distText, sizeof(distText), "%.0fm", distance);
-            draw->AddText(ImVec2(radarX + 6, radarY - 6), espColor, distText);
+            draw->AddText(ImVec2(screen.x + 5, screen.y), espColor, distText);
         }
         
-        // Draw health
+        // Draw Health
         if (g_Menu.espHealth) {
             float health = GetPlayerHealth(player);
             if (health > 0 && health <= 1000) {
-                char hpText[32];
-                snprintf(hpText, sizeof(hpText), "%.0f", health);
-                draw->AddText(ImVec2(radarX + 6, radarY + 6), IM_COL32(255, 255, 0, 255), hpText);
+                ImU32 healthColor = IM_COL32(
+                    (int)((1.0f - health/1000.0f) * 255),
+                    (int)((health/1000.0f) * 255), 0, 255);
+                
+                char healthText[32];
+                snprintf(healthText, sizeof(healthText), "HP: %.0f", health);
+                draw->AddText(ImVec2(screen.x + 5, screen.y + 15), healthColor, healthText);
             }
         }
-        
-        playersDrawn++;
     }
-    
-    // Draw radar title
-    char radarTitle[64];
-    snprintf(radarTitle, sizeof(radarTitle), "RADAR [%d]", playersDrawn);
-    draw->AddText(ImVec2(radarCenter.x - radarSize/2 + 10, radarCenter.y - radarSize/2 + 10), 
-                  IM_COL32(255, 255, 255, 255), radarTitle);
 }
 // ==================== END ESP RENDERING ====================
 
@@ -1532,7 +1639,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) {
     DrawFPSGraph();  // FPS-ANALIZE график
     DrawFloatingIcon();
     DrawMainMenu();
-    DrawESP();  // Рисуем ESP поверх всего
+    DrawESP();  // PUBG-style ESP с fallback на 2D Radar
 
 
     if (g_Menu.needsSave) {
