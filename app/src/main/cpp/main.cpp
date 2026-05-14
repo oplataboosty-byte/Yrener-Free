@@ -73,6 +73,9 @@ constexpr qword OFFSET_WEAPON_ARRAY = 0x5A8;
 constexpr qword OFFSET_POOL_LOCAL_PLAYER = 0x610;
 constexpr qword OFFSET_POOL_ALL_PLAYERS = 0x640;
 
+// ViewMatrix offset (pointer to pointer)
+constexpr qword OFFSET_VIEWMATRIX_PTR = 0x264F700;
+
 // Get local player pointer from pool
 qword GetLocalPlayer() {
     if (g_PlayerPoolPtr == 0) return 0;
@@ -130,6 +133,65 @@ bool IsPlayerInVehicle(qword playerPtr) {
     if (playerPtr == 0) return false;
     qword vehPtr = *(qword*)(playerPtr + OFFSET_VEHICLE_PTR);
     return vehPtr != 0;
+}
+
+// Get all players array
+qword GetPlayerPool() {
+    if (g_PlayerPoolPtr == 0) return 0;
+    qword pool = *(qword*)g_PlayerPoolPtr;
+    return pool;
+}
+
+// Get player by ID from pool
+qword GetPlayerByID(int playerID) {
+    qword pool = GetPlayerPool();
+    if (pool == 0) return 0;
+    if (playerID < 0 || playerID >= 1000) return 0;
+    
+    qword allPlayersArray = *(qword*)(pool + OFFSET_POOL_ALL_PLAYERS);
+    if (allPlayersArray == 0) return 0;
+    
+    qword playerPtr = *(qword*)(allPlayersArray + playerID * 8);
+    return playerPtr;
+}
+
+// Check if player is valid/spawned
+bool IsPlayerValid(qword playerPtr) {
+    if (playerPtr == 0) return false;
+    float health = GetPlayerHealth(playerPtr);
+    return health > 0.0f;
+}
+
+// WorldToScreen - convert 3D world coordinates to 2D screen coordinates
+bool WorldToScreen(float worldX, float worldY, float worldZ, float& screenX, float& screenY) {
+    if (libaddr == 0) return false;
+    
+    // Get ViewMatrix pointer
+    qword viewMatrixPtr = *(qword*)(libaddr + OFFSET_VIEWMATRIX_PTR);
+    if (viewMatrixPtr == 0) return false;
+    
+    float* viewMatrix = (float*)viewMatrixPtr;
+    
+    // Matrix multiply: screenPos = viewMatrix * worldPos
+    float w = viewMatrix[3] * worldX + viewMatrix[7] * worldY + viewMatrix[11] * worldZ + viewMatrix[15];
+    
+    if (w < 0.01f) return false; // Behind camera
+    
+    float x = viewMatrix[0] * worldX + viewMatrix[4] * worldY + viewMatrix[8] * worldZ + viewMatrix[12];
+    float y = viewMatrix[1] * worldX + viewMatrix[5] * worldY + viewMatrix[9] * worldZ + viewMatrix[13];
+    
+    // Perspective divide
+    x /= w;
+    y /= w;
+    
+    // NDC to screen space
+    int screenWidth = g_Menu.screenWidth > 0 ? g_Menu.screenWidth : 1920;
+    int screenHeight = g_Menu.screenHeight > 0 ? g_Menu.screenHeight : 1080;
+    
+    screenX = (screenWidth / 2.0f) + (x * screenWidth / 2.0f);
+    screenY = (screenHeight / 2.0f) - (y * screenHeight / 2.0f);
+    
+    return (screenX >= 0 && screenX <= screenWidth && screenY >= 0 && screenY <= screenHeight);
 }
 // ==================== END PLAYER HELPERS ====================
 
@@ -501,15 +563,150 @@ void DrawFPS() {
     if (!g_Menu.showFPS) return;
     ImGuiIO& io = ImGui::GetIO();
     ThemeColors tc = GetThemeColors(g_Menu.currentTheme);
-    char fpsText[32];
+    
+    // FPS текст
+    char fpsText[64];
     snprintf(fpsText, sizeof(fpsText), "FPS: %.0f", io.Framerate);
-    ImVec2 textSize = ImGui::CalcTextSize(fpsText);
-    ImVec2 pos = ImVec2(glWidth - textSize.x - 150, 25);  // MOVED LEFT
+    
+    float fpsFontSize = ImGui::GetFontSize() * 1.6f;
+    ImVec2 fpsTextSize = ImGui::GetFont()->CalcTextSizeA(fpsFontSize, FLT_MAX, 0.0f, fpsText);
+    ImVec2 fpsPos = ImVec2(glWidth - fpsTextSize.x - 80, 55);
+    
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
-    dl->AddRectFilled(ImVec2(pos.x - 12, pos.y - 6),
-                      ImVec2(pos.x + textSize.x + 12, pos.y + textSize.y + 6),
-                      ImGui::ColorConvertFloat4ToU32(ImVec4(0, 0, 0, 0.65f)), 8.0f);
-    dl->AddText(pos, ImGui::ColorConvertFloat4ToU32(tc.text), fpsText);
+    
+    // Фон для FPS
+    dl->AddRectFilled(ImVec2(fpsPos.x - 16, fpsPos.y - 10),
+                      ImVec2(fpsPos.x + fpsTextSize.x + 16, fpsPos.y + fpsTextSize.y + 10),
+                      ImGui::ColorConvertFloat4ToU32(ImVec4(0, 0, 0, 0.70f)), 10.0f);
+    dl->AddText(ImGui::GetFont(), fpsFontSize, fpsPos,
+                ImGui::ColorConvertFloat4ToU32(tc.text), fpsText);
+    
+    // PING с цветами (симуляция, можно заменить на реальный пинг)
+    static int currentPing = 45; // TODO: получать реальный пинг из игры
+    
+    // Определяем цвет пинга
+    ImVec4 pingColor;
+    if (currentPing >= 150) {
+        pingColor = ImVec4(1.0f, 0.0f, 0.0f, 1.0f); // Красный
+    } else if (currentPing >= 50) {
+        pingColor = ImVec4(1.0f, 1.0f, 0.0f, 1.0f); // Жёлтый
+    } else {
+        pingColor = ImVec4(0.0f, 1.0f, 0.0f, 1.0f); // Зелёный
+    }
+    
+    char pingText[64];
+    snprintf(pingText, sizeof(pingText), "PING: %dms", currentPing);
+    
+    ImVec2 pingTextSize = ImGui::GetFont()->CalcTextSizeA(fpsFontSize, FLT_MAX, 0.0f, pingText);
+    ImVec2 pingPos = ImVec2(fpsPos.x, fpsPos.y + fpsTextSize.y + 20);
+    
+    // Фон для PING
+    dl->AddRectFilled(ImVec2(pingPos.x - 16, pingPos.y - 10),
+                      ImVec2(pingPos.x + pingTextSize.x + 16, pingPos.y + pingTextSize.y + 10),
+                      ImGui::ColorConvertFloat4ToU32(ImVec4(0, 0, 0, 0.70f)), 10.0f);
+    
+    // Рисуем PING цветным текстом
+    dl->AddText(ImGui::GetFont(), fpsFontSize, pingPos,
+                ImGui::ColorConvertFloat4ToU32(pingColor), pingText);
+}
+
+// FPS-ANALIZE: график истории FPS
+static float fpsHistory[100] = {0};
+static int fpsHistoryIndex = 0;
+
+void DrawFPSGraph() {
+    if (!g_Menu.showFPSGraph) return;
+    
+    ImGuiIO& io = ImGui::GetIO();
+    ThemeColors tc = GetThemeColors(g_Menu.currentTheme);
+    
+    // Обновляем историю FPS
+    fpsHistory[fpsHistoryIndex] = io.Framerate;
+    fpsHistoryIndex = (fpsHistoryIndex + 1) % 100;
+    
+    // Позиция графика (справа снизу)
+    float graphWidth = 300.0f;
+    float graphHeight = 120.0f;
+    ImVec2 graphPos = ImVec2(glWidth - graphWidth - 20, glHeight - graphHeight - 20);
+    
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    
+    // Фон графика
+    dl->AddRectFilled(
+        graphPos,
+        ImVec2(graphPos.x + graphWidth, graphPos.y + graphHeight),
+        ImGui::ColorConvertFloat4ToU32(ImVec4(0, 0, 0, 0.75f)),
+        8.0f
+    );
+    
+    // Рамка
+    dl->AddRect(
+        graphPos,
+        ImVec2(graphPos.x + graphWidth, graphPos.y + graphHeight),
+        ImGui::ColorConvertFloat4ToU32(ImVec4(0.3f, 0.3f, 0.3f, 1.0f)),
+        8.0f,
+        0,
+        1.5f
+    );
+    
+    // Находим min/max FPS для масштабирования
+    float minFPS = 999.0f, maxFPS = 0.0f;
+    for (int i = 0; i < 100; i++) {
+        if (fpsHistory[i] > 0) {
+            if (fpsHistory[i] < minFPS) minFPS = fpsHistory[i];
+            if (fpsHistory[i] > maxFPS) maxFPS = fpsHistory[i];
+        }
+    }
+    
+    if (maxFPS - minFPS < 10.0f) {
+        minFPS = maxFPS - 10.0f;
+        if (minFPS < 0) minFPS = 0;
+    }
+    
+    // Рисуем линию графика
+    ImVec2 prevPoint;
+    bool firstPoint = true;
+    
+    for (int i = 0; i < 100; i++) {
+        int idx = (fpsHistoryIndex + i) % 100;
+        float fps = fpsHistory[idx];
+        
+        if (fps <= 0) continue;
+        
+        // Нормализуем FPS к высоте графика
+        float normalized = (fps - minFPS) / (maxFPS - minFPS + 0.001f);
+        normalized = 1.0f - normalized; // Инвертируем (высокий FPS = сверху)
+        
+        float x = graphPos.x + 10 + (i / 100.0f) * (graphWidth - 20);
+        float y = graphPos.y + 30 + normalized * (graphHeight - 50);
+        
+        ImVec2 point = ImVec2(x, y);
+        
+        if (!firstPoint) {
+            // Цвет линии в зависимости от FPS
+            ImU32 lineColor;
+            if (fps >= 55) {
+                lineColor = IM_COL32(0, 255, 0, 255); // Зелёный = хороший FPS
+            } else if (fps >= 30) {
+                lineColor = IM_COL32(255, 255, 0, 255); // Жёлтый = средний
+            } else {
+                lineColor = IM_COL32(255, 0, 0, 255); // Красный = плохой
+            }
+            
+            dl->AddLine(prevPoint, point, lineColor, 2.0f);
+        }
+        
+        prevPoint = point;
+        firstPoint = false;
+    }
+    
+    // Текст с текущим FPS и min/max
+    char infoText[128];
+    snprintf(infoText, sizeof(infoText), "FPS: %.0f  Min: %.0f  Max: %.0f", 
+             io.Framerate, minFPS, maxFPS);
+    
+    ImVec2 textPos = ImVec2(graphPos.x + 10, graphPos.y + 8);
+    dl->AddText(textPos, ImGui::ColorConvertFloat4ToU32(tc.text), infoText);
 }
 
 void DrawClock() {
@@ -536,7 +733,7 @@ void DrawClock() {
     char buf[32];
     strftime(buf, sizeof(buf), "%H:%M:%S", t);
 
-    ImGui::SetWindowFontScale(g_Menu.clockSize);
+    ImGui::SetWindowFontScale(g_Menu.clockSize * 1.6f);
     ImGui::TextColored(tc.text, "%s", buf);
     ImGui::SetWindowFontScale(1.0f);
 
@@ -558,7 +755,7 @@ void DrawCoordsWindow() {
     ThemeColors tc = GetThemeColors(g_Menu.currentTheme);
     ImVec2 pos = g_Menu.showClock
                  ? ImVec2(g_Menu.clockPos.x, g_Menu.clockPos.y + 58.0f)
-                 : ImVec2(glWidth - 380.0f, 90.0f);  // MOVED LEFT
+                 : ImVec2(glWidth - 240.0f, 90.0f);
 
     ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0.72f));
@@ -719,6 +916,105 @@ void DrawJsonLogWindow() {
     ImGui::End();
 }
 
+// ==================== ESP RENDERING ====================
+void DrawESP() {
+    if (!g_Menu.espEnabled) return;
+    if (libaddr == 0) return;
+    
+    qword localPlayer = GetLocalPlayer();
+    if (localPlayer == 0) return;
+    
+    float localX, localY, localZ;
+    GetPlayerPos(localPlayer, localX, localY, localZ);
+    
+    // Update screen size
+    ImGuiIO& io = ImGui::GetIO();
+    g_Menu.screenWidth = (int)io.DisplaySize.x;
+    g_Menu.screenHeight = (int)io.DisplaySize.y;
+    
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    
+    // Loop through all players
+    for (int i = 0; i < 1000; i++) {
+        qword player = GetPlayerByID(i);
+        if (!IsPlayerValid(player)) continue;
+        if (player == localPlayer) continue; // Skip self
+        
+        float px, py, pz;
+        GetPlayerPos(player, px, py, pz);
+        
+        // Calculate distance
+        float dx = px - localX;
+        float dy = py - localY;
+        float dz = pz - localZ;
+        float distance = sqrtf(dx*dx + dy*dy + dz*dz);
+        
+        if (distance > g_Menu.espMaxDistance) continue;
+        
+        // World to screen
+        float screenX, screenY;
+        if (!WorldToScreen(px, py, pz, screenX, screenY)) continue;
+        
+        // Get ESP color
+        ImU32 color = IM_COL32(
+            (int)(g_Menu.espColor[0] * 255),
+            (int)(g_Menu.espColor[1] * 255),
+            (int)(g_Menu.espColor[2] * 255),
+            255
+        );
+        
+        // Draw ESP Box
+        if (g_Menu.espBox) {
+            float boxHeight = 2000.0f / distance; // Approximate height based on distance
+            float boxWidth = boxHeight * 0.5f;
+            
+            draw->AddRect(
+                ImVec2(screenX - boxWidth/2, screenY - boxHeight),
+                ImVec2(screenX + boxWidth/2, screenY),
+                color,
+                0.0f,
+                0,
+                2.0f
+            );
+        }
+        
+        // Draw Snapline
+        if (g_Menu.espSnapline) {
+            draw->AddLine(
+                ImVec2(g_Menu.screenWidth / 2.0f, g_Menu.screenHeight),
+                ImVec2(screenX, screenY),
+                color,
+                1.5f
+            );
+        }
+        
+        // Draw Distance
+        if (g_Menu.espDistance) {
+            char distText[32];
+            snprintf(distText, sizeof(distText), "%.0fm", distance);
+            draw->AddText(ImVec2(screenX + 5, screenY), color, distText);
+        }
+        
+        // Draw Health
+        if (g_Menu.espHealth) {
+            float health = GetPlayerHealth(player);
+            float healthPercent = health / 1000.0f;
+            
+            ImU32 healthColor = IM_COL32(
+                (int)((1.0f - healthPercent) * 255),
+                (int)(healthPercent * 255),
+                0,
+                255
+            );
+            
+            char healthText[32];
+            snprintf(healthText, sizeof(healthText), "HP: %.0f", health);
+            draw->AddText(ImVec2(screenX + 5, screenY + 15), healthColor, healthText);
+        }
+    }
+}
+// ==================== END ESP RENDERING ====================
+
 void DrawMainMenu() {
     if (g_Menu.animAlpha < 0.01f) return;
 
@@ -742,7 +1038,7 @@ void DrawMainMenu() {
         ImGui::SetNextWindowPos(g_Menu.menuPos, ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(menuWidth, menuHeight), ImGuiCond_Always);
 
-        ImGui::Begin("REE_MENU", nullptr,
+        ImGui::Begin("YRENER MENU", nullptr,
                      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar);
 
         ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -762,7 +1058,7 @@ void DrawMainMenu() {
         }
 
         ImGui::SetCursorPos(ImVec2(S(18.0f), S(16.0f)));
-        ImGui::TextColored(ImVec4(0.88f, 0.93f, 1.0f, 1.0f), "REE 64");
+        ImGui::TextColored(ImVec4(0.88f, 0.93f, 1.0f, 1.0f), "@Yrener_Soft");
 
         ImGui::SetCursorPos(ImVec2(menuWidth - S(112.0f), S(13.0f)));
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
@@ -887,7 +1183,7 @@ void DrawMainMenu() {
         ImGui::EndChild();
 
         ImGui::SetCursorPos(ImVec2(contentX, bodyY));
-        ImGui::BeginChild("##ContentModern", ImVec2(contentW, bodyH), true);  // SCROLL ENABLED
+        ImGui::BeginChild("##ContentModern", ImVec2(contentW, bodyH), true, ImGuiWindowFlags_NoScrollbar);
 
         ImGui::Dummy(ImVec2(0.0f, S(10.0f)));
 
@@ -896,7 +1192,7 @@ void DrawMainMenu() {
 
         switch (g_Menu.activeTab) {
             case 0:
-                drawTileToggle("game_collision", "Бессмертие от игры", &func.collision, tileWidth);
+                drawTileToggle("game_collision", "collision", &func.collision, tileWidth);
                 ImGui::SameLine(0.0f, gap);
                 drawTileToggle("game_afk", "Ходить под водой", &func.afk, tileWidth);
                 drawTileToggle("game_camera", "Заморозка камеры", &func.camfreeze, tileWidth);
@@ -939,101 +1235,39 @@ void DrawMainMenu() {
                 }
                 break;
 
-            case 3: {
-                drawSectionTitle("Информация");
+            case 3:
+                drawSectionTitle("ESP / WallHack");
+                drawTileToggle("esp_enabled", "ESP Включен", &g_Menu.espEnabled, tileWidth);
+                ImGui::SameLine(0.0f, gap);
+                drawTileToggle("esp_box", "ESP Box", &g_Menu.espBox, tileWidth);
+                drawTileToggle("esp_name", "ESP Имя", &g_Menu.espName, tileWidth);
+                ImGui::SameLine(0.0f, gap);
+                drawTileToggle("esp_health", "ESP Здоровье", &g_Menu.espHealth, tileWidth);
+                drawTileToggle("esp_distance", "ESP Дистанция", &g_Menu.espDistance, tileWidth);
+                ImGui::SameLine(0.0f, gap);
+                drawTileToggle("esp_skeleton", "ESP Скелет", &g_Menu.espSkeleton, tileWidth);
+                drawTileToggle("esp_weapon", "ESP Оружие", &g_Menu.espWeapon, tileWidth);
+                ImGui::SameLine(0.0f, gap);
+                drawTileToggle("esp_snapline", "ESP Линии", &g_Menu.espSnapline, tileWidth);
                 
-                // Display current player stats
-                qword player = GetLocalPlayer();
-                if (player != 0) {
-                    float hp = GetPlayerHealth(player);
-                    float armor = GetPlayerArmor(player);
-                    float x, y, z;
-                    GetPlayerPos(player, x, y, z);
-                    bool inVeh = IsPlayerInVehicle(player);
-                    
-                    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.95f, 0.97f, 0.99f, 1.0f));
-                    ImGui::BeginChild("##PlayerStats", ImVec2(-1, S(180.0f)), true);
-                    
-                    ImGui::TextColored(ImVec4(0.2f, 0.3f, 0.5f, 1.0f), "Статистика игрока:");
-                    ImGui::Separator();
-                    ImGui::Dummy(ImVec2(0, S(4.0f)));
-                    
-                    ImGui::Text("HP: %.1f / 100.0", hp);
-                    ImGui::Text("Броня: %.1f / 100.0", armor);
-                    ImGui::Text("Позиция: X=%.2f Y=%.2f Z=%.2f", x, y, z);
-                    ImGui::Text("В транспорте: %s", inVeh ? "Да" : "Нет");
-                    
-                    ImGui::Dummy(ImVec2(0, S(8.0f)));
-                    ImGui::TextColored(ImVec4(0.3f, 0.6f, 0.3f, 1.0f), 
-                                      "PlayerPool: 0x%llX", (unsigned long long)g_PlayerPoolPtr);
-                    ImGui::TextColored(ImVec4(0.3f, 0.6f, 0.3f, 1.0f), 
-                                      "LocalPlayer: 0x%llX", (unsigned long long)player);
-                    
-                    ImGui::EndChild();
-                    ImGui::PopStyleColor();
-                } else {
-                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), 
-                                      "Игрок не найден!");
-                }
+                // Color picker для ESP (только шестерёнка)
+                ImGui::Dummy(ImVec2(0.0f, S(8.0f)));
+                ImGui::ColorEdit3("Цвет ESP##esp_color", g_Menu.espColor, 
+                    ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_PickerHueWheel | ImGuiColorEditFlags_DisplayRGB);
                 
-                ImGui::Dummy(ImVec2(0, S(12.0f)));
-                drawSectionTitle("Технические оффсеты");
+                drawSectionTitle("Chams");
+                drawTileToggle("chams_enabled", "Chams", &g_Menu.chamsEnabled, tileWidth);
+                ImGui::SameLine(0.0f, gap);
+                drawTileToggle("chams_visibility", "Авто цвет (стена)", &g_Menu.chamsVisibilityCheck, tileWidth);
                 
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.95f, 0.97f, 0.99f, 1.0f));
-                ImGui::BeginChild("##Offsets", ImVec2(-1, -1), true);
-                
-                ImGui::TextColored(ImVec4(0.2f, 0.3f, 0.5f, 1.0f), "Функции:");
-                ImGui::Separator();
-                ImGui::Text("SendChatMessage:   0xC8529C");
-                ImGui::Text("ChatVM_AddMessage: 0x7D2F28");
-                ImGui::Text("LocalPlayer_Tick:  0xB10D30");
-                ImGui::Text("PedFight_fn:       0xBD9708");
-                
-                ImGui::Dummy(ImVec2(0, S(8.0f)));
-                ImGui::TextColored(ImVec4(0.2f, 0.3f, 0.5f, 1.0f), "PlayerPool:");
-                ImGui::Separator();
-                ImGui::Text("PlayerPool:        base+0x2660610");
-                ImGui::Text("LocalPlayerPtr:    pool+0x610");
-                ImGui::Text("AllPlayers:        pool+0x640");
-                
-                ImGui::Dummy(ImVec2(0, S(8.0f)));
-                ImGui::TextColored(ImVec4(0.2f, 0.3f, 0.5f, 1.0f), "CPlayer структура:");
-                ImGui::Separator();
-                ImGui::Text("Health:     player+0xB4");
-                ImGui::Text("Armor:      player+0xBC");
-                ImGui::Text("Pos_X/Y/Z:  player+0x18C/190/194");
-                ImGui::Text("Vel_Z:      player+0x1AC");
-                ImGui::Text("VehiclePtr: player+0x3B4");
-                ImGui::Text("WeaponSlot: player+0x5A0");
-                ImGui::Text("WeaponArray: player+0x5A8");
-                
-                // ==== КНОПКИ ====
-                ImGui::Dummy(ImVec2(0, S(12.0f)));
-                ImGui::TextColored(ImVec4(0.2f, 0.3f, 0.5f, 1.0f), "Тестовые функции:");
-                ImGui::Separator();
-                
-                if (ImGui::Button("Отправить тест в чат", ImVec2(-1, S(40.0f)))) {
-                    if (SendChatMessage) {
-                        SendChatMessage((char*)"[Yrener] Test message");
-                    }
-                }
-                
-                if (ImGui::Button("Показать libaddr", ImVec2(-1, S(40.0f)))) {
-                    char msg[256];
-                    snprintf(msg, sizeof(msg), "[Yrener] libaddr: 0x%llX", (unsigned long long)libaddr);
-                    if (AddChatMessage) {
-                        AddChatMessage(msg);
-                    }
-                }
-                
-                ImGui::Dummy(ImVec2(0, S(8.0f)));
-                ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), 
-                                  "Build ID: cc103ea36fd93b7758a6d1a6ccbf34278dd62504");
-                
-                ImGui::EndChild();
-                ImGui::PopStyleColor();
+                // Color pickers для Chams (только шестерёнки)
+                ImGui::Dummy(ImVec2(0.0f, S(8.0f)));
+                ImGui::ColorEdit3("За стеной##chams_occluded", g_Menu.chamsOccludedColor, 
+                    ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_PickerHueWheel | ImGuiColorEditFlags_DisplayRGB);
+                ImGui::SameLine();
+                ImGui::ColorEdit3("Видимый##chams_visible", g_Menu.chamsVisibleColor, 
+                    ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_PickerHueWheel | ImGuiColorEditFlags_DisplayRGB);
                 break;
-            }
 
             case 4:
                 drawSectionTitle("Настройки");
@@ -1061,6 +1295,9 @@ void DrawMainMenu() {
                     g_Menu.currentTheme = (g_Menu.currentTheme + 1) % THEME_COUNT;
                     g_Menu.needsSave = true;
                 }
+                
+                drawSectionTitle("FPS");
+                drawTileToggle("fps_analyze", "FPS-ANALIZE", &g_Menu.showFPSGraph, tileWidth);
                 break;
         }
 
@@ -1094,7 +1331,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) {
         g_Menu.menuPos = ImVec2(glWidth * 0.5f - GetMenuWidthScaled() * 0.5f,
                                 glHeight * 0.5f - GetMenuHeightScaled() * 0.5f);
         g_Menu.iconPos = ImVec2(50, glHeight/2);
-        g_Menu.clockPos = ImVec2(glWidth - 250, 30);
+        g_Menu.clockPos = ImVec2(glWidth - 350, 60);
 
         ApplyTheme(g_Menu.currentTheme);
         ImGui_ImplOpenGL3_Init("#version 100");
@@ -1116,8 +1353,10 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) {
     DrawClock();
     DrawCoordsWindow();
     DrawFPS();
+    DrawFPSGraph();  // FPS-ANALIZE график
     DrawFloatingIcon();
     DrawMainMenu();
+    DrawESP();  // Рисуем ESP поверх всего
 
 
     if (g_Menu.needsSave) {
@@ -1215,9 +1454,6 @@ void hook_game_functions() {
     DobbyHook((void*)(libaddr + string2Offset("0x659684")), (void *)CNetGame_Process, (void **)&old_CNetGame_Process);
     */
     // ==================== END OFFSETS ====================
-    
-    // NOW call hook_game_functions since libaddr is set
-    hook_game_functions();
 
     const char* sendJsonSymbols[] = {
             "Java_com_blackhub_bronline_game_core_JNILib_sendJsonData",
@@ -1262,7 +1498,7 @@ void hook_entry() {
         }
         dlclose(lib);
     }
-    // hook_game_functions() moved inside hook_game_functions after libaddr is set
+    hook_game_functions();
 }
 extern "C" {
 

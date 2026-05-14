@@ -51,6 +51,8 @@ struct MenuState {
     float animAlpha = 0.0f;
     int activeTab = 0;
     bool needsSave = false;
+    int screenWidth = 1920;
+    int screenHeight = 1080;
 
     // === Настройки интерфейса ===
     int currentTheme = THEME_NEON_BLUE;
@@ -59,6 +61,7 @@ struct MenuState {
     float menuColor[3] = {0.08f, 0.08f, 0.10f};
     bool enableAnimations = true;
     bool showFPS = false;
+    bool showFPSGraph = false;  // FPS-ANALIZE график
     bool compactMode = false;
 
     // === ШРИФТ ===
@@ -120,12 +123,6 @@ struct MenuState {
     bool antiKick = false;
     bool antiAFK = false;
 
-    // === ФУНКЦИИ: Защита ===
-    bool godmode = false;
-    bool antiHeadshot = false;
-    bool fakelag = false;
-    int fakelagAmount = 0;
-
     // === ФУНКЦИИ: ESP ===
     bool espEnabled = false;
     bool espBox = false;
@@ -138,9 +135,13 @@ struct MenuState {
     bool espWeapon = false;
     bool espSnapline = false;
     float espMaxDistance = 500.0f;
-    float espColor[3] = {1.0f, 0.0f, 0.0f};
-    float espEnemyColor[3] = {1.0f, 0.0f, 0.0f};
-    float espFriendlyColor[3] = {0.0f, 1.0f, 0.0f};
+    float espColor[3] = {1.0f, 0.0f, 0.0f};  // Красный для боксов
+    
+    // === ФУНКЦИИ: CHAMS ===
+    bool chamsEnabled = false;
+    bool chamsVisibilityCheck = true;  // Автоматически менять цвет по видимости
+    float chamsOccludedColor[3] = {1.0f, 0.0f, 0.0f};  // Красный - за стеной
+    float chamsVisibleColor[3] = {0.0f, 1.0f, 0.0f};   // Зелёный - видимый
 
     // === ФУНКЦИИ: Мир ===
     bool nightVision = false;
