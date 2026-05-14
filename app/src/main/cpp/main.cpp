@@ -932,6 +932,19 @@ void DrawESP() {
     g_Menu.screenWidth = (int)io.DisplaySize.x;
     g_Menu.screenHeight = (int)io.DisplaySize.y;
     
+    // Check ViewMatrix pointer before using
+    qword viewMatrixPtrAddr = libaddr + OFFSET_VIEWMATRIX_PTR;
+    if (viewMatrixPtrAddr == 0) return;
+    
+    qword viewMatrixPtr = 0;
+    __try {
+        viewMatrixPtr = *(qword*)viewMatrixPtrAddr;
+    } __except(1) {
+        return; // Invalid memory access
+    }
+    
+    if (viewMatrixPtr == 0) return;
+    
     ImDrawList* draw = ImGui::GetForegroundDrawList();
     
     // Loop through all players
@@ -950,6 +963,7 @@ void DrawESP() {
         float distance = sqrtf(dx*dx + dy*dy + dz*dz);
         
         if (distance > g_Menu.espMaxDistance) continue;
+        if (distance < 0.1f) continue; // Too close, probably invalid
         
         // World to screen
         float screenX, screenY;
@@ -965,7 +979,7 @@ void DrawESP() {
         
         // Draw ESP Box
         if (g_Menu.espBox) {
-            float boxHeight = 2000.0f / distance; // Approximate height based on distance
+            float boxHeight = 2000.0f / (distance + 1.0f); // Approximate height based on distance
             float boxWidth = boxHeight * 0.5f;
             
             draw->AddRect(
@@ -998,18 +1012,20 @@ void DrawESP() {
         // Draw Health
         if (g_Menu.espHealth) {
             float health = GetPlayerHealth(player);
-            float healthPercent = health / 1000.0f;
-            
-            ImU32 healthColor = IM_COL32(
-                (int)((1.0f - healthPercent) * 255),
-                (int)(healthPercent * 255),
-                0,
-                255
-            );
-            
-            char healthText[32];
-            snprintf(healthText, sizeof(healthText), "HP: %.0f", health);
-            draw->AddText(ImVec2(screenX + 5, screenY + 15), healthColor, healthText);
+            if (health > 0 && health <= 1000) { // Sanity check
+                float healthPercent = health / 1000.0f;
+                
+                ImU32 healthColor = IM_COL32(
+                    (int)((1.0f - healthPercent) * 255),
+                    (int)(healthPercent * 255),
+                    0,
+                    255
+                );
+                
+                char healthText[32];
+                snprintf(healthText, sizeof(healthText), "HP: %.0f", health);
+                draw->AddText(ImVec2(screenX + 5, screenY + 15), healthColor, healthText);
+            }
         }
     }
 }
@@ -1156,7 +1172,7 @@ void DrawMainMenu() {
         const float bodyH = menuHeight - bodyY - S(16.0f);
 
         ImGui::SetCursorPos(ImVec2(S(16.0f), bodyY));
-        ImGui::BeginChild("##SidebarModern", ImVec2(sidebarW, bodyH), true, ImGuiWindowFlags_NoScrollbar);
+        ImGui::BeginChild("##SidebarModern", ImVec2(sidebarW, bodyH), true);
         ImGui::TextColored(ImVec4(0.76f, 0.82f, 0.92f, 1.0f), "Yrener v1.0");
         ImGui::TextColored(ImVec4(0.56f, 0.62f, 0.72f, 1.0f), "@Yrener_Soft");
         ImGui::Dummy(ImVec2(0.0f, S(8.0f)));
@@ -1183,7 +1199,7 @@ void DrawMainMenu() {
         ImGui::EndChild();
 
         ImGui::SetCursorPos(ImVec2(contentX, bodyY));
-        ImGui::BeginChild("##ContentModern", ImVec2(contentW, bodyH), true, ImGuiWindowFlags_NoScrollbar);
+        ImGui::BeginChild("##ContentModern", ImVec2(contentW, bodyH), true);
 
         ImGui::Dummy(ImVec2(0.0f, S(10.0f)));
 
