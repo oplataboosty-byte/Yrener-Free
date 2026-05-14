@@ -936,13 +936,7 @@ void DrawESP() {
     qword viewMatrixPtrAddr = libaddr + OFFSET_VIEWMATRIX_PTR;
     if (viewMatrixPtrAddr == 0) return;
     
-    qword viewMatrixPtr = 0;
-    __try {
-        viewMatrixPtr = *(qword*)viewMatrixPtrAddr;
-    } __except(1) {
-        return; // Invalid memory access
-    }
-    
+    qword viewMatrixPtr = *(qword*)viewMatrixPtrAddr;
     if (viewMatrixPtr == 0) return;
     
     ImDrawList* draw = ImGui::GetForegroundDrawList();
